@@ -1,0 +1,464 @@
+import * as THREE from 'three';
+import { GLTFLoader } from './vendor/GLTFLoader.js';
+import { OrbitControls } from './vendor/OrbitControls.js';
+import { clone } from './vendor/SkeletonUtils.js';
+
+const byId = id => document.getElementById(id);
+const species = {
+  charmander: '파이리', bulbasaur: '이상해씨', squirtle: '꼬부기', eevee: '이브이', pikachu: '피카츄',
+};
+const colors = {
+  '빨강': '#eb3d55', '주황': '#ff8736', '노랑': '#ffdf51', '초록': '#4ab96a',
+  '파랑': '#3b83ea', '보라': '#914be5', '분홍': '#ff82bc', '흰색': '#ffffff', '검정': '#232035',
+};
+const buttons = [...document.querySelectorAll('button, select, input')];
+const status = byId('status');
+const stage = byId('stage');
+const loader = new GLTFLoader();
+const library = new Map();
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 50);
+let renderer, controls, lawn, model, db;
+let currentView = 'studio';
+let mode = 'paint';
+let color = Object.values(colors)[0];
+let busy = false;
+let strokes = [];
+let activeStroke;
+let press;
+const residents = [];
+
+function database() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('family-garden', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('drawings', { autoIncrement: true });
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+  });
+}
+
+function drawings(mode, operation) {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction('drawings', mode);
+    const request = operation(transaction.objectStore('drawings'));
+    transaction.onabort = () => reject(transaction.error);
+    transaction.oncomplete = () => resolve(request.result);
+  });
+}
+
+async function latestDrawings() {
+  return new Promise((resolve, reject) => {
+    const found = [];
+    const transaction = db.transaction('drawings', 'readonly');
+    const request = transaction.objectStore('drawings').openCursor(null, 'prev');
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) return;
+      found.push(cursor.value);
+      if (found.length < 6) cursor.continue();
+    };
+    transaction.onabort = () => reject(transaction.error);
+    transaction.oncomplete = () => resolve(found.reverse());
+  });
+}
+
+async function loadModel(id) {
+  if (!library.has(id)) {
+    library.set(id, loader.loadAsync('./models/' + id + '.glb').catch(error => {
+      library.delete(id);
+      throw error;
+    }));
+  }
+  const asset = await library.get(id);
+  const object = clone(asset.scene);
+  const box = new THREE.Box3().setFromObject(object);
+  const center = box.getCenter(new THREE.Vector3());
+  object.position.sub(new THREE.Vector3(center.x, box.min.y, center.z));
+  const size = box.getSize(new THREE.Vector3());
+  const root = new THREE.Group();
+  root.scale.setScalar(1.45 / Math.max(size.x, size.y, size.z));
+  root.add(object);
+
+  const materials = new Map();
+  const layers = [];
+  const byTexture = new Map();
+  object.traverse(mesh => {
+    if (!mesh.isMesh) return;
+    const copyMaterial = original => {
+      if (materials.has(original)) return materials.get(original);
+      const material = original.clone();
+      materials.set(original, material);
+      if (original.map) {
+        if (!byTexture.has(original.map)) {
+          const layer = { id: layers.length, source: original.map, materials: [] };
+          byTexture.set(original.map, layer);
+          layers.push(layer);
+        }
+        const layer = byTexture.get(original.map);
+        layer.materials.push(material);
+        material.userData.paintLayer = layer.id;
+      }
+      return material;
+    };
+    mesh.material = Array.isArray(mesh.material) ? mesh.material.map(copyMaterial) : copyMaterial(mesh.material);
+  });
+  return { root, layers, materials, mixer: new THREE.AnimationMixer(object), clips: asset.animations };
+}
+
+function release(pet) {
+  if (!pet) return;
+  pet.root.removeFromParent();
+  pet.mixer.stopAllAction();
+  for (const material of pet.materials.values()) material.dispose();
+  for (const layer of pet.layers) layer.texture?.dispose();
+  const skeletons = new Set();
+  pet.root.traverse(node => { if (node.isSkinnedMesh) skeletons.add(node.skeleton); });
+  for (const skeleton of skeletons) skeleton.dispose();
+}
+
+function resetLayer(layer) {
+  const { canvas, context, source } = layer;
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(source.image, 0, 0, canvas.width, canvas.height);
+  layer.texture.needsUpdate = true;
+}
+
+function prepareLayer(layer) {
+  if (layer.canvas) return;
+  const source = layer.source;
+  const canvas = document.createElement('canvas');
+  const scale = Math.min(1, 768 / Math.max(source.image.width, source.image.height));
+  canvas.width = Math.max(1, Math.round(source.image.width * scale));
+  canvas.height = Math.max(1, Math.round(source.image.height * scale));
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = source.colorSpace;
+  texture.flipY = source.flipY;
+  texture.channel = source.channel;
+  texture.wrapS = source.wrapS;
+  texture.wrapT = source.wrapT;
+  texture.matrix.copy(source.matrix);
+  texture.matrixAutoUpdate = false;
+  layer.canvas = canvas;
+  layer.context = canvas.getContext('2d');
+  layer.texture = texture;
+  for (const material of layer.materials) material.map = texture;
+  resetLayer(layer);
+}
+
+function mark(pet, stroke, point, previous) {
+  const [id, u, v] = point;
+  const layer = pet.layers[id];
+  if (!layer) return;
+  prepareLayer(layer);
+  const { canvas, context, texture } = layer;
+  const x = u * canvas.width;
+  const y = v * canvas.height;
+  const radius = Math.max(1, stroke.size / 420 * Math.max(canvas.width, canvas.height));
+  context.fillStyle = context.strokeStyle = stroke.color;
+  if (previous?.[0] === id && Math.hypot(u - previous[1], v - previous[2]) < 0.14) {
+    context.lineWidth = radius * 2;
+    context.lineCap = 'round';
+    context.beginPath();
+    context.moveTo(previous[1] * canvas.width, previous[2] * canvas.height);
+    context.lineTo(x, y);
+    context.stroke();
+  }
+  context.beginPath();
+  context.arc(x, y, radius, 0, 2 * Math.PI);
+  context.fill();
+  texture.needsUpdate = true;
+}
+
+function replay(pet, history) {
+  for (const layer of pet.layers) if (layer.canvas) resetLayer(layer);
+  for (const stroke of history) {
+    let previous;
+    for (const point of stroke.points) {
+      if (point) mark(pet, stroke, point, previous);
+      previous = point;
+    }
+  }
+}
+
+function ray(event) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, 1 - (event.clientY - rect.top) / rect.height * 2);
+  raycaster.setFromCamera(pointer, camera);
+  return raycaster;
+}
+
+function paint(event) {
+  const hit = ray(event).intersectObject(model.root, true)[0];
+  const material = Array.isArray(hit?.object.material)
+    ? hit.object.material[hit.face.materialIndex] : hit?.object.material;
+  const layer = model.layers[material?.userData.paintLayer];
+  const uv = layer?.source.channel === 1 ? hit?.uv1 : hit?.uv;
+  if (!layer || !uv) {
+    if (activeStroke.points.at(-1)) activeStroke.points.push(null);
+    return;
+  }
+  layer.source.updateMatrix();
+  const mapped = layer.source.transformUv(uv.clone());
+  const point = [layer.id, mapped.x, mapped.y];
+  const previous = activeStroke.points.at(-1);
+  if (previous && previous[0] === point[0] && Math.hypot(previous[1] - point[1], previous[2] - point[2]) < 0.002) return;
+  mark(model, activeStroke, point, previous);
+  activeStroke.points.push(point);
+}
+
+function play(pet, name, once = false) {
+  const clip = pet.clips.find(item => item.name === name);
+  if (!clip || (pet.action?.getClip() === clip && !once)) return;
+  const action = pet.mixer.clipAction(clip);
+  if (pet.action && pet.action !== action) pet.action.fadeOut(0.16);
+  action.reset().setEffectiveWeight(1).setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, once ? 1 : Infinity);
+  action.clampWhenFinished = once;
+  action.fadeIn(0.16).play();
+  pet.action = action;
+}
+
+function setMode(value) {
+  mode = value;
+  controls.enabled = currentView === 'garden' || value === 'rotate';
+  for (const id of ['paint', 'rotate']) byId(id).setAttribute('aria-pressed', String(id === value));
+}
+
+function setView(view) {
+  currentView = view;
+  lawn.visible = view === 'garden';
+  scene.background.set(view === 'garden' ? '#d5edfb' : '#dcefd4');
+  for (const id of ['studio', 'garden']) byId(id).setAttribute('aria-pressed', String(id === view));
+  byId('editor').hidden = view !== 'studio';
+  byId('gardenInfo').hidden = view !== 'garden';
+  setMode('paint');
+}
+
+function positionCamera(garden) {
+  camera.position.set(...(garden ? [3.6, 4.4, 7.4] : [0, 1.25, 4]));
+  controls.target.set(0, garden ? 0 : 0.65, 0);
+  controls.update();
+}
+
+async function openStudio() {
+  const next = await loadModel(byId('species').value);
+  release(model);
+  residents.splice(0).forEach(release);
+  model = next;
+  model.speciesId = byId('species').value;
+  strokes = [];
+  scene.add(model.root);
+  setView('studio');
+  positionCamera(false);
+  status.textContent = '손가락으로 포켓몬을 색칠해요.';
+}
+
+async function openGarden() {
+  const entries = await latestDrawings();
+  const next = [];
+  try {
+    for (const [index, entry] of entries.entries()) {
+      const pet = await loadModel(entry.id);
+      next.push(pet);
+      replay(pet, entry.strokes);
+      const row = Math.floor(index / 3);
+      const columns = Math.min(3, entries.length - row * 3);
+      const x = (index % 3 - (columns - 1) / 2) * 2.15;
+      const z = entries.length > 3 ? (row - 0.5) * 2.5 : 0;
+      pet.home = new THREE.Vector3(x, 0, z);
+      pet.root.position.copy(pet.home);
+      pet.phase = index * 1.9 % 9;
+      pet.reactUntil = 0;
+      play(pet, 'idle');
+    }
+  } catch (error) {
+    next.forEach(release);
+    throw error;
+  }
+  release(model);
+  model = null;
+  strokes = [];
+  residents.splice(0).forEach(release);
+  residents.push(...next);
+  residents.forEach(pet => scene.add(pet.root));
+  byId('residents').replaceChildren(...entries.map(entry => {
+    const item = document.createElement('li');
+    item.textContent = entry.profile + ' · ' + species[entry.id];
+    return item;
+  }));
+  setView('garden');
+  positionCamera(true);
+  status.textContent = entries.length ? '포켓몬이 정원에서 놀고 있어요.' : '포켓몬을 색칠해서 정원에 보내보세요.';
+}
+
+function updateGarden(dt, time) {
+  for (const pet of residents) {
+    if (time >= pet.reactUntil) {
+      pet.phase = (pet.phase + dt) % 9;
+      const phase = pet.phase;
+      const angle = Math.min(phase, 5) / 5 * 2 * Math.PI;
+      pet.root.position.set(pet.home.x + Math.sin(angle) * 0.56, 0, pet.home.z + (1 - Math.cos(angle)) * 0.42);
+      if (phase < 5) pet.root.rotation.y = Math.atan2(0.56 * Math.cos(angle), 0.42 * Math.sin(angle));
+      play(pet, phase < 5 ? 'walk' : 'idle');
+    }
+    pet.mixer.update(dt);
+  }
+}
+
+function refreshButtons() {
+  byId('finish').disabled = !strokes.length;
+  byId('undo').disabled = !strokes.length;
+  byId('clear').disabled = !strokes.length;
+}
+
+async function run(task) {
+  if (busy) return;
+  busy = true;
+  buttons.forEach(button => { button.disabled = true; });
+  try {
+    await task();
+  } catch (error) {
+    console.error(error);
+    status.textContent = '불러오거나 저장하지 못했어요. 다시 시도해 주세요.';
+  } finally {
+    busy = false;
+    buttons.forEach(button => { button.disabled = false; });
+    refreshButtons();
+  }
+}
+
+function wireControls() {
+  for (const [id, name] of Object.entries(species)) byId('species').add(new Option(name, id));
+  for (const [name, value] of Object.entries(colors)) {
+    const button = document.createElement('button');
+    button.style.setProperty('--paint', value);
+    button.setAttribute('aria-label', name);
+    button.setAttribute('aria-pressed', String(color === value));
+    button.onclick = () => {
+      color = value;
+      for (const swatch of byId('palette').children) swatch.setAttribute('aria-pressed', String(swatch === button));
+    };
+    byId('palette').append(button);
+    buttons.push(button);
+  }
+
+  byId('species').onchange = () => run(async () => {
+    const select = byId('species');
+    const previous = model?.speciesId;
+    if (strokes.length && !confirm('지금 색칠한 그림을 지울까요?')) {
+      select.value = previous;
+      return;
+    }
+    try {
+      await openStudio();
+    } catch (error) {
+      if (previous) select.value = previous;
+      throw error;
+    }
+  });
+  byId('studio').onclick = () => { if (currentView !== 'studio' || !model) run(openStudio); };
+  byId('garden').onclick = () => {
+    if (currentView === 'garden') return;
+    if (!strokes.length || confirm('완성하지 않은 그림을 지우고 정원으로 갈까요?')) run(openGarden);
+  };
+  byId('paint').onclick = () => setMode('paint');
+  byId('rotate').onclick = () => setMode('rotate');
+  byId('undo').onclick = () => { strokes.pop(); replay(model, strokes); refreshButtons(); };
+  byId('clear').onclick = () => {
+    if (confirm('색칠한 내용을 모두 지울까요?')) { strokes = []; replay(model, strokes); refreshButtons(); }
+  };
+  byId('finish').onclick = () => run(async () => {
+    await drawings('readwrite', store => store.add({
+      id: byId('species').value, profile: byId('profile').value, strokes,
+    }));
+    strokes = [];
+    try {
+      await openGarden();
+    } catch (error) {
+      console.error(error);
+      status.textContent = '그림은 저장했어요. 우리 정원을 다시 열어 주세요.';
+    }
+  });
+
+  const canvas = renderer.domElement;
+  canvas.addEventListener('pointerdown', event => {
+    if (busy || !event.isPrimary) return;
+    if (currentView === 'garden') {
+      press = [event.clientX, event.clientY];
+    } else if (mode === 'paint' && model) {
+      canvas.setPointerCapture(event.pointerId);
+      activeStroke = { color, size: Number(byId('brush').value), points: [] };
+      paint(event);
+    }
+  });
+  canvas.addEventListener('pointermove', event => { if (event.isPrimary && activeStroke && !busy) paint(event); });
+  function finishStroke() {
+    if (activeStroke?.points.length) strokes.push(activeStroke);
+    activeStroke = null;
+    if (!busy) refreshButtons();
+  }
+  canvas.addEventListener('pointercancel', () => { finishStroke(); press = null; });
+  canvas.addEventListener('lostpointercapture', finishStroke);
+  canvas.addEventListener('pointerup', event => {
+    if (!event.isPrimary) return;
+    finishStroke();
+    if (!busy && currentView === 'garden' && press && Math.hypot(event.clientX - press[0], event.clientY - press[1]) < 12) {
+      const hit = ray(event).intersectObjects(residents.map(pet => pet.root), true)[0];
+      let root = hit?.object;
+      while (root && root.parent !== scene) root = root.parent;
+      const pet = residents.find(item => item.root === root);
+      const happy = pet?.clips.find(clip => clip.name === 'happy');
+      if (happy) {
+        pet.reactUntil = elapsed + happy.duration;
+        play(pet, 'happy', true);
+      }
+    }
+    press = null;
+  });
+}
+
+let elapsed = 0;
+async function start() {
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+  stage.append(renderer.domElement);
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enablePan = false;
+  controls.minDistance = 2;
+  controls.maxDistance = 16;
+  controls.maxPolarAngle = Math.PI / 2 - 0.05;
+  scene.background = new THREE.Color('#dcefd4');
+  scene.add(new THREE.HemisphereLight('#ffffff', '#b8c5a3', 2));
+  const sun = new THREE.DirectionalLight('#fff0da', 2.2);
+  sun.position.set(4, 7, 6);
+  scene.add(sun);
+  lawn = new THREE.Mesh(new THREE.CircleGeometry(5.7, 48), new THREE.MeshStandardMaterial({ color: '#84bd65' }));
+  lawn.rotation.x = -Math.PI / 2;
+  lawn.visible = false;
+  scene.add(lawn);
+  new ResizeObserver(() => {
+    const { clientWidth: width, clientHeight: height } = stage;
+    if (!width || !height) return;
+    renderer.setSize(width, height);
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+  }).observe(stage);
+
+  db = await database();
+  wireControls();
+  let last = performance.now();
+  renderer.setAnimationLoop(now => {
+    const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+    last = now;
+    elapsed += dt;
+    if (currentView === 'garden') updateGarden(dt, elapsed);
+    renderer.render(scene, camera);
+  });
+  await run(openStudio);
+}
+
+start().catch(error => {
+  console.error(error);
+  status.textContent = '3D 화면을 시작하지 못했어요. Android System WebView를 업데이트하고 다시 열어 주세요.';
+});

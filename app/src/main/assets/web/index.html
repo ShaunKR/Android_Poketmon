@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' blob:">
+<title>포켓몬 정원</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="./style.css">
+<script type="importmap">{"imports":{"three":"./vendor/three.module.js"}}</script>
+</head>
+<body>
+<header>
+  <div><span class="eyebrow">우리 집 색칠 놀이터</span><h1>포켓몬 정원</h1></div>
+  <label>만든 사람 <select id="profile"><option>아이 1</option><option>아이 2</option></select></label>
+</header>
+<main>
+  <section id="stage" aria-label="포켓몬 3D 화면"></section>
+  <aside>
+    <div class="tabs"><button id="studio" aria-pressed="true">색칠하기</button><button id="garden" aria-pressed="false">우리 정원</button></div>
+    <section id="editor">
+      <label>포켓몬 고르기 <select id="species"></select></label>
+      <div class="tabs"><button id="paint" aria-pressed="true">색칠</button><button id="rotate" aria-pressed="false">돌려보기</button></div>
+      <div id="palette" aria-label="물감"></div>
+      <label>붓 크기 <input id="brush" type="range" min="3" max="35" value="14"></label>
+      <div class="tabs"><button id="undo">되돌리기</button><button id="clear">처음부터</button></div>
+      <button class="primary" id="finish">완성 · 정원에 보내기</button>
+    </section>
+    <section id="gardenInfo" hidden>
+      <h2>함께 만든 정원</h2>
+      <p>최근 완성한 포켓몬 여섯 마리가 함께 지내요. 포켓몬을 톡 누르면 기뻐해요.</p>
+      <ul id="residents"></ul>
+    </section>
+    <p id="status" role="status">정원을 준비하고 있어요.</p>
+  </aside>
+</main>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
