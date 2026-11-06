@@ -12,7 +12,10 @@ aside { display: grid; align-content: start; gap: 12px; padding: 14px; border-ra
 #editor { display: grid; gap: 12px; }
 [hidden] { display: none !important; }
 label { display: grid; gap: 4px; font-size: 14px; font-weight: bold; }
-button, select { font: inherit; color: inherit; min-height: 44px; border: 1px solid #a9baaa; border-radius: 10px; background: white; padding: 6px 10px; }
+button, select, input[type=url], input[type=password] { font: inherit; color: inherit; min-height: 44px; border: 1px solid #a9baaa; border-radius: 10px; background: white; padding: 6px 10px; }
+details label { margin-top: 8px; }
+details input { width: 100%; }
+summary { cursor: pointer; padding: 6px 0; }
 button { font-weight: 700; cursor: pointer; }
 button:disabled { opacity: .45; }
 button[aria-pressed=true], .primary { background: #225c46; color: #fff; }

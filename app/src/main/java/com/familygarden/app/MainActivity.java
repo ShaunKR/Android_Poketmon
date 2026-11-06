@@ -25,6 +25,7 @@ public class MainActivity extends Activity {
         webView.getSettings().setAllowContentAccess(false);
         // WebView must accept HTTPS requests before the client can serve them from the APK.
         webView.setWebChromeClient(new WebChromeClient());
+        webView.addJavascriptInterface(new GardenUpload(webView), "HomeGarden");
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {

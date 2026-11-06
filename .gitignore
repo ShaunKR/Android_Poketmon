@@ -4,3 +4,4 @@ local.properties
 **/build/
 app/src/main/assets/web/models/*.glb
 app/src/main/assets/web/models/*.download
+garden-data/

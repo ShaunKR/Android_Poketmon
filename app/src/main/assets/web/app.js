@@ -14,6 +14,8 @@ const colors = {
 const buttons = [...document.querySelectorAll('button, select, input')];
 const status = byId('status');
 const stage = byId('stage');
+const sharedGarden = location.pathname === '/garden';
+const nas = window.HomeGarden;
 const loader = new GLTFLoader();
 const library = new Map();
 const raycaster = new THREE.Raycaster();
@@ -28,6 +30,8 @@ let busy = false;
 let strokes = [];
 let activeStroke;
 let press;
+let pendingUpload;
+let shownUploads;
 const residents = [];
 
 function database() {
@@ -201,7 +205,7 @@ function paint(event) {
   }
   layer.source.updateMatrix();
   const mapped = layer.source.transformUv(uv.clone());
-  const point = [layer.id, mapped.x, mapped.y];
+  const point = [layer.id, Math.round(mapped.x * 10000) / 10000, Math.round(mapped.y * 10000) / 10000];
   const previous = activeStroke.points.at(-1);
   if (previous && previous[0] === point[0] && Math.hypot(previous[1] - point[1], previous[2] - point[2]) < 0.002) return;
   mark(model, activeStroke, point, previous);
@@ -254,8 +258,8 @@ async function openStudio() {
   status.textContent = '손가락으로 포켓몬을 색칠해요.';
 }
 
-async function openGarden() {
-  const entries = await latestDrawings();
+async function openGarden(entries = null) {
+  entries ??= await latestDrawings();
   const next = [];
   try {
     for (const [index, entry] of entries.entries()) {
@@ -288,7 +292,7 @@ async function openGarden() {
     return item;
   }));
   setView('garden');
-  positionCamera(true);
+  if (!sharedGarden || shownUploads === undefined) positionCamera(true);
   status.textContent = entries.length ? '포켓몬이 정원에서 놀고 있어요.' : '포켓몬을 색칠해서 정원에 보내보세요.';
 }
 
@@ -307,6 +311,7 @@ function updateGarden(dt, time) {
 }
 
 function refreshButtons() {
+  byId('send').disabled = !strokes.length;
   byId('finish').disabled = !strokes.length;
   byId('undo').disabled = !strokes.length;
   byId('clear').disabled = !strokes.length;
@@ -380,7 +385,51 @@ function wireControls() {
       status.textContent = '그림은 저장했어요. 우리 정원을 다시 열어 주세요.';
     }
   });
+  if (nas) {
+    byId('serverSettings').hidden = byId('send').hidden = false;
+    byId('serverUrl').value = localStorage.getItem('serverUrl') ?? '';
+    byId('serverKey').value = localStorage.getItem('serverKey') ?? '';
+    for (const field of ['serverUrl', 'serverKey']) {
+      byId(field).addEventListener('change', event => localStorage.setItem(field, event.target.value.trim()));
+    }
+    byId('send').onclick = () => run(sendDrawing);
+  }
+}
 
+async function sendDrawing() {
+  const server = byId('serverUrl').value.trim();
+  const key = byId('serverKey').value.trim();
+  if (!server || !key) {
+    byId('serverSettings').open = true;
+    status.textContent = '집 서버 주소와 전송 키를 먼저 입력해 주세요.';
+    return;
+  }
+  const drawing = { id: byId('species').value, profile: byId('profile').value, strokes };
+  const snapshot = JSON.stringify(drawing);
+  if (pendingUpload?.snapshot !== snapshot) {
+    pendingUpload = { snapshot, uploadId: crypto.randomUUID() };
+  }
+  const payload = JSON.stringify({ ...drawing, uploadId: pendingUpload.uploadId });
+  status.textContent = '집 정원으로 보내고 있어요.';
+  const result = await new Promise(resolve => {
+    window.finishGardenUpload = resolve;
+    nas.send(server, key, payload);
+  });
+  if (result !== 'ok') {
+    status.textContent = {
+      address: '서버 주소에 집 안 IP와 포트를 입력해 주세요.',
+      denied: '전송 키가 달라요. 설정을 확인해 주세요.',
+      size: '그림 데이터가 너무 커요. 일부 색칠을 되돌린 뒤 다시 보내 주세요.',
+    }[result] ?? '전송하지 못했어요. 와이파이와 집 서버를 확인한 뒤 다시 눌러 주세요.';
+    return;
+  }
+  pendingUpload = null;
+  strokes = [];
+  replay(model, strokes);
+  status.textContent = '전송 완료! 집 서버의 웹 정원을 확인해 보세요.';
+}
+
+function wireCanvas() {
   const canvas = renderer.domElement;
   canvas.addEventListener('pointerdown', event => {
     if (busy || !event.isPrimary) return;
@@ -418,6 +467,25 @@ function wireControls() {
   });
 }
 
+async function refreshSharedGarden() {
+  try {
+    const response = await fetch('/api/drawings', { cache: 'no-store' });
+    if (!response.ok) throw new Error('Garden status ' + response.status);
+    const entries = await response.json();
+    const revision = entries.map(entry => entry.uploadId).join(',');
+    if (revision !== shownUploads) {
+      await openGarden(entries);
+      shownUploads = revision;
+    }
+    status.textContent = entries.length ? '포켓몬이 정원에서 놀고 있어요.' : '태블릿에서 포켓몬을 전송해 보세요.';
+  } catch (error) {
+    console.error(error);
+    status.textContent = '집 정원에 연결하는 중이에요.';
+  } finally {
+    setTimeout(refreshSharedGarden, 2000);
+  }
+}
+
 let elapsed = 0;
 async function start() {
   renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -445,8 +513,7 @@ async function start() {
     camera.updateProjectionMatrix();
   }).observe(stage);
 
-  db = await database();
-  wireControls();
+  wireCanvas();
   let last = performance.now();
   renderer.setAnimationLoop(now => {
     const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
@@ -455,7 +522,17 @@ async function start() {
     if (currentView === 'garden') updateGarden(dt, elapsed);
     renderer.render(scene, camera);
   });
-  await run(openStudio);
+  if (sharedGarden) {
+    document.querySelector('header label').hidden = true;
+    byId('studio').parentElement.hidden = true;
+    setView('garden');
+    positionCamera(true);
+    await refreshSharedGarden();
+  } else {
+    db = await database();
+    wireControls();
+    await run(openStudio);
+  }
 }
 
 start().catch(error => {
