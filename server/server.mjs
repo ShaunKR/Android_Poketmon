@@ -121,7 +121,7 @@ function upload(request, response) {
 
 function staticFile(request, response, pathname) {
   const file = pathname === '/garden' ? 'index.html' : pathname.slice(1);
-  if (!/^(?:index\.html|app\.js|style\.css|vendor\/[A-Za-z.]+\.js|models\/[a-z]+\.glb)$/.test(file)) {
+  if (!/^(?:index\.html|app\.js|coloring-sheet\.js|style\.css|vendor\/[A-Za-z.]+\.js|models\/[a-z]+\.glb)$/.test(file)) {
     return json(response, 404, { error: 'Not found' });
   }
   const path = resolve(webRoot, file);

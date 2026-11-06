@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
 import { clone } from './vendor/SkeletonUtils.js';
+import { ColoringSheet } from './coloring-sheet.js';
 
 const byId = id => document.getElementById(id);
 const species = {
@@ -23,11 +24,11 @@ const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 50);
+const sheet = new ColoringSheet();
 let renderer, controls, lawn, model, db;
 let currentView = 'splash';
 let settingsReturn = 'home';
 let preferences;
-let mode = 'paint';
 let color = Object.values(colors)[0];
 let busy = false;
 let strokes = [];
@@ -194,9 +195,10 @@ function replay(pet, history) {
 }
 
 function ray(event) {
-  const rect = renderer.domElement.getBoundingClientRect();
+  const editing = currentView === 'studio';
+  const rect = (editing ? sheet.element : renderer.domElement).getBoundingClientRect();
   pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, 1 - (event.clientY - rect.top) / rect.height * 2);
-  raycaster.setFromCamera(pointer, camera);
+  raycaster.setFromCamera(pointer, editing ? sheet.camera : camera);
   return raycaster;
 }
 
@@ -208,6 +210,7 @@ function paint(event) {
   const uv = layer?.source.channel === 1 ? hit?.uv1 : hit?.uv;
   if (!layer || !uv) {
     if (activeStroke.points.at(-1)) activeStroke.points.push(null);
+    sheet.add(activeStroke, null);
     return;
   }
   layer.source.updateMatrix();
@@ -215,8 +218,11 @@ function paint(event) {
   const point = [layer.id, Math.round(mapped.x * 10000) / 10000, Math.round(mapped.y * 10000) / 10000];
   const previous = activeStroke.points.at(-1);
   if (previous && previous[0] === point[0] && Math.hypot(previous[1] - point[1], previous[2] - point[2]) < 0.002) return;
-  mark(model, activeStroke, point, previous);
   activeStroke.points.push(point);
+  sheet.add(activeStroke, {
+    x: (pointer.x + 1) * sheet.element.width / 2,
+    y: (1 - pointer.y) * sheet.element.height / 2,
+  });
 }
 
 function play(pet, name, once = false) {
@@ -230,12 +236,6 @@ function play(pet, name, once = false) {
   pet.action = action;
 }
 
-function setMode(value) {
-  mode = value;
-  controls.enabled = currentView === 'garden' || value === 'rotate';
-  for (const id of ['paint', 'rotate']) byId(id).setAttribute('aria-pressed', String(id === value));
-}
-
 function setView(view) {
   currentView = view;
   for (const id of ['splash', 'home', 'picker', 'serverSettings']) {
@@ -245,11 +245,14 @@ function setView(view) {
   byId('back').hidden = sharedGarden || view === 'home';
   byId('settings').hidden = sharedGarden || view === 'settings';
   byId('workspace').hidden = view !== 'studio' && view !== 'garden';
+  stage.classList.toggle('is-sheet', view === 'studio');
+  sheet.element.hidden = view !== 'studio';
+  renderer.domElement.hidden = view !== 'garden';
+  controls.enabled = view === 'garden';
   lawn.visible = view === 'garden';
   scene.background.set(view === 'garden' ? '#d5edfb' : '#dcefd4');
   byId('editor').hidden = view !== 'studio';
   byId('gardenInfo').hidden = view !== 'garden';
-  setMode('paint');
 }
 
 function positionCamera(garden) {
@@ -267,9 +270,10 @@ async function openStudio(id) {
   byId('drawingTitle').textContent = species[id] + ' 색칠하기';
   strokes = [];
   scene.add(model.root);
+  lawn.visible = false;
+  sheet.prepare(renderer, scene);
   setView('studio');
-  positionCamera(false);
-  status.textContent = '손가락으로 포켓몬을 색칠해요.';
+  status.textContent = '색을 고르고 정면 도안에 칠해요.';
 }
 
 async function openGarden(entries = null) {
@@ -424,17 +428,16 @@ function wireControls() {
     buttons.push(button);
   }
 
-  byId('paint').onclick = () => setMode('paint');
-  byId('rotate').onclick = () => setMode('rotate');
-  byId('undo').onclick = () => { strokes.pop(); replay(model, strokes); refreshButtons(); };
+  byId('undo').onclick = () => { strokes.pop(); sheet.replay(strokes); refreshButtons(); };
   byId('clear').onclick = () => {
-    if (confirm('색칠한 내용을 모두 지울까요?')) { strokes = []; replay(model, strokes); refreshButtons(); }
+    if (confirm('색칠한 내용을 모두 지울까요?')) { strokes = []; sheet.replay(strokes); refreshButtons(); }
   };
   byId('finish').onclick = () => run(async () => {
     await drawings('readwrite', store => store.add({
       id: model.speciesId, profile: preferences.profile, strokes,
     }));
     strokes = [];
+    sheet.replay(strokes);
     try {
       await openGarden();
     } catch (error) {
@@ -476,17 +479,16 @@ async function sendDrawing() {
   }
   pendingUpload = null;
   strokes = [];
-  replay(model, strokes);
+  sheet.replay(strokes);
   status.textContent = '전송 완료! 집 서버의 웹 정원을 확인해 보세요.';
 }
 
-function wireCanvas() {
-  const canvas = renderer.domElement;
+function wireCanvas(canvas) {
   canvas.addEventListener('pointerdown', event => {
     if (busy || !event.isPrimary) return;
     if (currentView === 'garden') {
       press = [event.clientX, event.clientY];
-    } else if (mode === 'paint' && model) {
+    } else if (currentView === 'studio' && model) {
       canvas.setPointerCapture(event.pointerId);
       activeStroke = { color, size: Number(byId('brush').value), points: [] };
       paint(event);
@@ -542,6 +544,7 @@ async function start() {
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
   stage.append(renderer.domElement);
+  stage.append(sheet.element);
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enablePan = false;
   controls.minDistance = 2;
@@ -559,19 +562,21 @@ async function start() {
   new ResizeObserver(() => {
     const { clientWidth: width, clientHeight: height } = stage;
     if (!width || !height) return;
+    stage.style.setProperty('--sheet-side', Math.min(width, height) + 'px');
     renderer.setSize(width, height);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
   }).observe(stage);
 
-  wireCanvas();
+  wireCanvas(renderer.domElement);
+  wireCanvas(sheet.element);
   let last = performance.now();
   renderer.setAnimationLoop(now => {
     const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
     last = now;
     elapsed += dt;
     if (currentView === 'garden') updateGarden(dt, elapsed);
-    if (currentView === 'studio' || currentView === 'garden') renderer.render(scene, camera);
+    if (currentView === 'garden') renderer.render(scene, camera);
   });
   if (sharedGarden) {
     setView('garden');

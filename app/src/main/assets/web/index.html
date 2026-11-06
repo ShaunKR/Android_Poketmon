@@ -23,10 +23,10 @@
   <div class="actions"><button id="back" hidden>뒤로</button><button id="settings">설정하기</button></div>
 </header>
 <section id="home" class="screen" hidden>
-  <h2>오늘은 어떤 포켓몬을 그릴까?</h2>
+  <h2>오늘은 어떤 포켓몬을 색칠할까?</h2>
   <p id="activeProfile"></p>
   <div class="actions">
-    <button id="choose" class="primary">그림 그리기</button>
+    <button id="choose" class="primary">색칠하기</button>
     <button id="garden">내 정원</button>
   </div>
   <p id="homeStatus" role="status"></p>
@@ -39,18 +39,17 @@
 <section id="serverSettings" class="screen" hidden>
   <h2>설정하기</h2>
   <form id="preferences">
-    <label>누가 그리나요? <select id="profile"><option value="아이 1">현진</option><option value="아이 2">현서</option></select></label>
+    <label>누가 색칠하나요? <select id="profile"><option value="아이 1">현진</option><option value="아이 2">현서</option></select></label>
     <label>서버 주소 <input id="serverUrl" type="url" placeholder="http://192.168.0.10:8787"></label>
     <label>전송 키 <input id="serverKey" type="password" autocomplete="off"></label>
     <button class="primary" type="submit">설정 저장</button>
   </form>
 </section>
 <main id="workspace" hidden>
-  <section id="stage" aria-label="포켓몬 3D 화면"></section>
+  <section id="stage" aria-label="포켓몬 화면"></section>
   <aside>
     <section id="editor">
       <h2 id="drawingTitle">색칠하기</h2>
-      <div class="tabs"><button id="paint" aria-pressed="true">색칠</button><button id="rotate" aria-pressed="false">돌려보기</button></div>
       <div id="palette" aria-label="물감"></div>
       <label>붓 크기 <input id="brush" type="range" min="3" max="35" value="14"></label>
       <div class="tabs"><button id="undo">되돌리기</button><button id="clear">처음부터</button></div>

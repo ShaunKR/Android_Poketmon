@@ -8,6 +8,8 @@ h2 { margin: 5px 0; }
 main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 30%); gap: 14px; }
 #stage { height: min(73vh, 780px); min-height: 280px; overflow: hidden; border-radius: 20px; background: #dcefd4; }
 #stage canvas { display: block; touch-action: none; }
+#stage.is-sheet { display: grid; place-items: center; background: #fff; }
+#coloringSheet { width: var(--sheet-side, 100%); height: auto; max-width: 100%; }
 aside { display: grid; align-content: start; gap: 12px; padding: 14px; border-radius: 20px; background: #fffdf5; }
 #editor { display: grid; gap: 12px; }
 [hidden] { display: none !important; }
