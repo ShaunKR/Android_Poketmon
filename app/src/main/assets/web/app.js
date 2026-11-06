@@ -16,6 +16,7 @@ const status = byId('status');
 const stage = byId('stage');
 const sharedGarden = location.pathname === '/garden';
 const nas = window.HomeGarden;
+const profileNames = { '아이 1': '현진', '아이 2': '현서' };
 const loader = new GLTFLoader();
 const library = new Map();
 const raycaster = new THREE.Raycaster();
@@ -23,7 +24,9 @@ const pointer = new THREE.Vector2();
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 50);
 let renderer, controls, lawn, model, db;
-let currentView = 'studio';
+let currentView = 'splash';
+let settingsReturn = 'home';
+let preferences;
 let mode = 'paint';
 let color = Object.values(colors)[0];
 let busy = false;
@@ -68,14 +71,18 @@ async function latestDrawings() {
   });
 }
 
-async function loadModel(id) {
+function loadAsset(id) {
   if (!library.has(id)) {
     library.set(id, loader.loadAsync('./models/' + id + '.glb').catch(error => {
       library.delete(id);
       throw error;
     }));
   }
-  const asset = await library.get(id);
+  return library.get(id);
+}
+
+async function loadModel(id) {
+  const asset = await loadAsset(id);
   const object = clone(asset.scene);
   const box = new THREE.Box3().setFromObject(object);
   const center = box.getCenter(new THREE.Vector3());
@@ -231,9 +238,15 @@ function setMode(value) {
 
 function setView(view) {
   currentView = view;
+  for (const id of ['splash', 'home', 'picker', 'serverSettings']) {
+    byId(id).hidden = id !== (view === 'settings' ? 'serverSettings' : view);
+  }
+  byId('header').hidden = view === 'splash';
+  byId('back').hidden = sharedGarden || view === 'home';
+  byId('settings').hidden = sharedGarden || view === 'settings';
+  byId('workspace').hidden = view !== 'studio' && view !== 'garden';
   lawn.visible = view === 'garden';
   scene.background.set(view === 'garden' ? '#d5edfb' : '#dcefd4');
-  for (const id of ['studio', 'garden']) byId(id).setAttribute('aria-pressed', String(id === view));
   byId('editor').hidden = view !== 'studio';
   byId('gardenInfo').hidden = view !== 'garden';
   setMode('paint');
@@ -245,12 +258,13 @@ function positionCamera(garden) {
   controls.update();
 }
 
-async function openStudio() {
-  const next = await loadModel(byId('species').value);
+async function openStudio(id) {
+  const next = await loadModel(id);
   release(model);
   residents.splice(0).forEach(release);
   model = next;
-  model.speciesId = byId('species').value;
+  model.speciesId = id;
+  byId('drawingTitle').textContent = species[id] + ' 색칠하기';
   strokes = [];
   scene.add(model.root);
   setView('studio');
@@ -288,7 +302,7 @@ async function openGarden(entries = null) {
   residents.forEach(pet => scene.add(pet.root));
   byId('residents').replaceChildren(...entries.map(entry => {
     const item = document.createElement('li');
-    item.textContent = entry.profile + ' · ' + species[entry.id];
+    item.textContent = (profileNames[entry.profile] ?? entry.profile) + ' · ' + species[entry.id];
     return item;
   }));
   setView('garden');
@@ -325,7 +339,8 @@ async function run(task) {
     await task();
   } catch (error) {
     console.error(error);
-    status.textContent = '불러오거나 저장하지 못했어요. 다시 시도해 주세요.';
+    const output = currentView === 'picker' ? byId('pickerStatus') : currentView === 'home' ? byId('homeStatus') : status;
+    output.textContent = '불러오거나 저장하지 못했어요. 다시 시도해 주세요.';
   } finally {
     busy = false;
     buttons.forEach(button => { button.disabled = false; });
@@ -333,8 +348,69 @@ async function run(task) {
   }
 }
 
+function openSettings() {
+  settingsReturn = currentView;
+  byId('profile').value = preferences.profile;
+  byId('serverUrl').value = preferences.server;
+  byId('serverKey').value = preferences.key;
+  setView('settings');
+}
+
 function wireControls() {
-  for (const [id, name] of Object.entries(species)) byId('species').add(new Option(name, id));
+  const profile = localStorage.getItem('profile');
+  preferences = {
+    profile: Object.hasOwn(profileNames, profile) ? profile : '아이 1',
+    server: localStorage.getItem('serverUrl') ?? '',
+    key: localStorage.getItem('serverKey') ?? '',
+  };
+  const showProfile = () => { byId('activeProfile').textContent = '지금 그리는 사람 · ' + profileNames[preferences.profile]; };
+  showProfile();
+  byId('settings').onclick = openSettings;
+  byId('preferences').onsubmit = event => {
+    event.preventDefault();
+    preferences = {
+      profile: byId('profile').value,
+      server: byId('serverUrl').value.trim(),
+      key: byId('serverKey').value.trim(),
+    };
+    localStorage.setItem('profile', preferences.profile);
+    localStorage.setItem('serverUrl', preferences.server);
+    localStorage.setItem('serverKey', preferences.key);
+    showProfile();
+    setView(settingsReturn);
+  };
+  byId('choose').onclick = () => {
+    byId('pickerStatus').textContent = '';
+    setView('picker');
+  };
+  byId('back').onclick = () => {
+    if (currentView === 'settings') {
+      setView(settingsReturn);
+    } else if (currentView === 'studio') {
+      if (strokes.length && !confirm('완성하지 않은 그림을 지울까요?')) return;
+      release(model);
+      model = null;
+      strokes = [];
+      pendingUpload = null;
+      setView('picker');
+    } else {
+      residents.splice(0).forEach(release);
+      byId('homeStatus').textContent = '';
+      setView('home');
+    }
+  };
+  byId('garden').onclick = () => run(() => openGarden());
+  for (const [id, name] of Object.entries(species)) {
+    const button = document.createElement('button');
+    button.textContent = name;
+    button.onclick = () => run(async () => {
+      byId('pickerStatus').textContent = name + '를 준비하고 있어요…';
+      await openStudio(id);
+      byId('pickerStatus').textContent = '';
+    });
+    byId('characters').append(button);
+    buttons.push(button);
+  }
   for (const [name, value] of Object.entries(colors)) {
     const button = document.createElement('button');
     button.style.setProperty('--paint', value);
@@ -348,25 +424,6 @@ function wireControls() {
     buttons.push(button);
   }
 
-  byId('species').onchange = () => run(async () => {
-    const select = byId('species');
-    const previous = model?.speciesId;
-    if (strokes.length && !confirm('지금 색칠한 그림을 지울까요?')) {
-      select.value = previous;
-      return;
-    }
-    try {
-      await openStudio();
-    } catch (error) {
-      if (previous) select.value = previous;
-      throw error;
-    }
-  });
-  byId('studio').onclick = () => { if (currentView !== 'studio' || !model) run(openStudio); };
-  byId('garden').onclick = () => {
-    if (currentView === 'garden') return;
-    if (!strokes.length || confirm('완성하지 않은 그림을 지우고 정원으로 갈까요?')) run(openGarden);
-  };
   byId('paint').onclick = () => setMode('paint');
   byId('rotate').onclick = () => setMode('rotate');
   byId('undo').onclick = () => { strokes.pop(); replay(model, strokes); refreshButtons(); };
@@ -375,7 +432,7 @@ function wireControls() {
   };
   byId('finish').onclick = () => run(async () => {
     await drawings('readwrite', store => store.add({
-      id: byId('species').value, profile: byId('profile').value, strokes,
+      id: model.speciesId, profile: preferences.profile, strokes,
     }));
     strokes = [];
     try {
@@ -386,25 +443,19 @@ function wireControls() {
     }
   });
   if (nas) {
-    byId('serverSettings').hidden = byId('send').hidden = false;
-    byId('serverUrl').value = localStorage.getItem('serverUrl') ?? '';
-    byId('serverKey').value = localStorage.getItem('serverKey') ?? '';
-    for (const field of ['serverUrl', 'serverKey']) {
-      byId(field).addEventListener('change', event => localStorage.setItem(field, event.target.value.trim()));
-    }
+    byId('send').hidden = false;
     byId('send').onclick = () => run(sendDrawing);
   }
 }
 
 async function sendDrawing() {
-  const server = byId('serverUrl').value.trim();
-  const key = byId('serverKey').value.trim();
+  const { server, key, profile } = preferences;
   if (!server || !key) {
-    byId('serverSettings').open = true;
     status.textContent = '집 서버 주소와 전송 키를 먼저 입력해 주세요.';
+    openSettings();
     return;
   }
-  const drawing = { id: byId('species').value, profile: byId('profile').value, strokes };
+  const drawing = { id: model.speciesId, profile, strokes };
   const snapshot = JSON.stringify(drawing);
   if (pendingUpload?.snapshot !== snapshot) {
     pendingUpload = { snapshot, uploadId: crypto.randomUUID() };
@@ -520,22 +571,26 @@ async function start() {
     last = now;
     elapsed += dt;
     if (currentView === 'garden') updateGarden(dt, elapsed);
-    renderer.render(scene, camera);
+    if (currentView === 'studio' || currentView === 'garden') renderer.render(scene, camera);
   });
   if (sharedGarden) {
-    document.querySelector('header label').hidden = true;
-    byId('studio').parentElement.hidden = true;
     setView('garden');
     positionCamera(true);
     await refreshSharedGarden();
   } else {
-    db = await database();
+    [db] = await Promise.all([
+      database(),
+      loadAsset('charmander').catch(error => console.warn(error)),
+      new Promise(resolve => setTimeout(resolve, 700)),
+    ]);
     wireControls();
-    await run(openStudio);
+    refreshButtons();
+    setView('home');
   }
 }
 
 start().catch(error => {
   console.error(error);
-  status.textContent = '3D 화면을 시작하지 못했어요. Android System WebView를 업데이트하고 다시 열어 주세요.';
+  const output = currentView === 'splash' ? byId('splashStatus') : status;
+  output.textContent = '화면을 시작하지 못했어요. 앱을 닫고 다시 열어 주세요.';
 });

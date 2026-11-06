@@ -13,9 +13,19 @@ aside { display: grid; align-content: start; gap: 12px; padding: 14px; border-ra
 [hidden] { display: none !important; }
 label { display: grid; gap: 4px; font-size: 14px; font-weight: bold; }
 button, select, input[type=url], input[type=password] { font: inherit; color: inherit; min-height: 44px; border: 1px solid #a9baaa; border-radius: 10px; background: white; padding: 6px 10px; }
-details label { margin-top: 8px; }
-details input { width: 100%; }
-summary { cursor: pointer; padding: 6px 0; }
+.screen { min-height: 55vh; padding: clamp(18px, 5vw, 60px); border-radius: 24px; background: #fffdf5; }
+.screen h2 { font-size: clamp(24px, 4vw, 38px); }
+.splash { min-height: calc(100vh - 60px); display: grid; align-content: center; justify-items: center; gap: 12px; background: #dcefd4; text-align: center; }
+.portraits, .actions { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
+.portraits figure { margin: 0; font-weight: bold; }
+.portrait { width: clamp(82px, 18vw, 148px); aspect-ratio: 1; border-radius: 50%; background: #225c46; color: white; display: grid; place-items: center; font-size: 24px; overflow: hidden; }
+.portrait img { width: 100%; height: 100%; object-fit: cover; }
+.portraits figure:nth-child(2) .portrait { background: #704786; }
+#home .actions { justify-content: flex-start; margin-top: 20px; }
+#home button { padding: 14px 24px; font-size: 20px; }
+.characters { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-top: 20px; }
+.characters button { min-height: 76px; font-size: 20px; }
+#preferences { max-width: 460px; display: grid; gap: 16px; margin-top: 18px; }
 button { font-weight: 700; cursor: pointer; }
 button:disabled { opacity: .45; }
 button[aria-pressed=true], .primary { background: #225c46; color: #fff; }
