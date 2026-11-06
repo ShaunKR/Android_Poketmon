@@ -17,6 +17,8 @@ const status = byId('status');
 const stage = byId('stage');
 const sharedGarden = location.pathname === '/garden';
 const nas = window.HomeGarden;
+const characterSync = window.NasCharacters;
+const bundled = Object.entries(species).map(([id, name]) => ({ id, name }));
 const profileNames = { '아이 1': '현진', '아이 2': '현서' };
 const loader = new GLTFLoader();
 const library = new Map();
@@ -29,6 +31,10 @@ let renderer, controls, lawn, model, db;
 let currentView = 'splash';
 let settingsReturn = 'home';
 let preferences;
+let synced = [];
+let selectedCharacter;
+let lastCharacterTap = 0;
+let catalogButtons = [];
 let color = Object.values(colors)[0];
 let busy = false;
 let strokes = [];
@@ -72,18 +78,19 @@ async function latestDrawings() {
   });
 }
 
-function loadAsset(id) {
-  if (!library.has(id)) {
-    library.set(id, loader.loadAsync('./models/' + id + '.glb').catch(error => {
-      library.delete(id);
+function loadAsset(id, hash) {
+  const path = hash ? './synced/' + hash + '.glb' : './models/' + id + '.glb';
+  if (!library.has(path)) {
+    library.set(path, loader.loadAsync(path).catch(error => {
+      library.delete(path);
       throw error;
     }));
   }
-  return library.get(id);
+  return library.get(path);
 }
 
-async function loadModel(id) {
-  const asset = await loadAsset(id);
+async function loadModel(id, hash) {
+  const asset = await loadAsset(id, hash);
   const object = clone(asset.scene);
   const box = new THREE.Box3().setFromObject(object);
   const center = box.getCenter(new THREE.Vector3());
@@ -261,19 +268,23 @@ function positionCamera(garden) {
   controls.update();
 }
 
-async function openStudio(id) {
-  const next = await loadModel(id);
+async function openStudio(character) {
+  const { id, name, hash } = character;
+  const next = await loadModel(id, hash);
   release(model);
   residents.splice(0).forEach(release);
   model = next;
   model.speciesId = id;
-  byId('drawingTitle').textContent = species[id] + ' 색칠하기';
+  model.character = character;
+  byId('drawingTitle').textContent = name + ' 색칠하기';
   strokes = [];
   scene.add(model.root);
   lawn.visible = false;
   sheet.prepare(renderer, scene);
   setView('studio');
-  status.textContent = '색을 고르고 정면 도안에 칠해요.';
+  status.textContent = hash
+    ? '정면 도안에 칠하고 패드의 내 정원에 저장할 수 있어요.'
+    : '색을 고르고 정면 도안에 칠해요.';
 }
 
 async function openGarden(entries = null) {
@@ -281,7 +292,7 @@ async function openGarden(entries = null) {
   const next = [];
   try {
     for (const [index, entry] of entries.entries()) {
-      const pet = await loadModel(entry.id);
+      const pet = await loadModel(entry.id, entry.hash);
       next.push(pet);
       replay(pet, entry.strokes);
       const row = Math.floor(index / 3);
@@ -306,7 +317,7 @@ async function openGarden(entries = null) {
   residents.forEach(pet => scene.add(pet.root));
   byId('residents').replaceChildren(...entries.map(entry => {
     const item = document.createElement('li');
-    item.textContent = (profileNames[entry.profile] ?? entry.profile) + ' · ' + species[entry.id];
+    item.textContent = (profileNames[entry.profile] ?? entry.profile) + ' · ' + (entry.name ?? species[entry.id]);
     return item;
   }));
   setView('garden');
@@ -329,7 +340,8 @@ function updateGarden(dt, time) {
 }
 
 function refreshButtons() {
-  byId('send').disabled = !strokes.length;
+  byId('send').disabled = !strokes.length || Boolean(model?.character.hash);
+  byId('showMotions').disabled = !selectedCharacter;
   byId('finish').disabled = !strokes.length;
   byId('undo').disabled = !strokes.length;
   byId('clear').disabled = !strokes.length;
@@ -338,7 +350,7 @@ function refreshButtons() {
 async function run(task) {
   if (busy) return;
   busy = true;
-  buttons.forEach(button => { button.disabled = true; });
+  [...buttons, ...catalogButtons].forEach(button => { button.disabled = true; });
   try {
     await task();
   } catch (error) {
@@ -347,7 +359,7 @@ async function run(task) {
     output.textContent = '불러오거나 저장하지 못했어요. 다시 시도해 주세요.';
   } finally {
     busy = false;
-    buttons.forEach(button => { button.disabled = false; });
+    [...buttons, ...catalogButtons].forEach(button => { button.disabled = false; });
     refreshButtons();
   }
 }
@@ -357,7 +369,88 @@ function openSettings() {
   byId('profile').value = preferences.profile;
   byId('serverUrl').value = preferences.server;
   byId('serverKey').value = preferences.key;
+  byId('characterUrl').value = preferences.characterUrl;
   setView('settings');
+}
+
+function renderCharacters() {
+  const picker = byId('characters');
+  const catalog = byId('characterCatalog');
+  picker.replaceChildren();
+  catalog.replaceChildren();
+  catalogButtons = [];
+  for (const character of [...bundled, ...synced]) {
+    const button = document.createElement('button');
+    button.textContent = character.name;
+    button.onclick = () => run(async () => {
+      byId('pickerStatus').textContent = character.name + ' 모델을 준비하고 있어요…';
+      await openStudio(character);
+      byId('pickerStatus').textContent = '';
+    });
+    const option = document.createElement('button');
+    option.textContent = character.name;
+    option.setAttribute('aria-pressed', String(selectedCharacter === character));
+    option.onclick = () => {
+      const now = performance.now();
+      const doubleTap = selectedCharacter === character && now - lastCharacterTap < 450;
+      lastCharacterTap = doubleTap ? 0 : now;
+      selectedCharacter = character;
+      for (const item of catalog.children) item.setAttribute('aria-pressed', String(item === option));
+      refreshButtons();
+      if (doubleTap) run(() => showMotions(character));
+    };
+    picker.append(button);
+    catalog.append(option);
+    catalogButtons.push(button, option);
+  }
+}
+
+async function syncCharacters() {
+  const folder = byId('characterUrl').value.trim()
+    || (byId('serverUrl').value.trim() && byId('serverUrl').value.trim().replace(/\/$/, '') + '/characters/');
+  const output = byId('syncStatus');
+  if (!folder) {
+    output.textContent = 'NAS 캐릭터 폴더 주소를 입력해 주세요.';
+    return;
+  }
+  output.textContent = 'NAS 폴더의 캐릭터를 패드에 내려받는 중이에요…';
+  const result = await new Promise(resolve => {
+    window.finishCharacterSync = resolve;
+    characterSync.sync(folder);
+  });
+  if (!Array.isArray(result)) {
+    output.textContent = '동기화하지 못했어요. 폴더 주소와 characters.json을 확인해 주세요. 기존 캐릭터는 계속 사용할 수 있어요.';
+    return;
+  }
+  localStorage.setItem('syncedCharacters', JSON.stringify(result));
+  localStorage.setItem('characterUrl', folder);
+  preferences.characterUrl = byId('characterUrl').value = folder;
+  synced = result;
+  selectedCharacter = null;
+  lastCharacterTap = 0;
+  renderCharacters();
+  output.textContent = '캐릭터 ' + result.length + '종을 동기화했어요. 인터넷 없이도 볼 수 있어요.';
+}
+
+async function showMotions(character) {
+  if (!character) return;
+  const output = byId('syncStatus');
+  output.textContent = '모션을 확인하고 있어요…';
+  try {
+    const asset = await loadAsset(character.id, character.hash);
+    byId('motionsTitle').textContent = character.name + ' 모션';
+    const names = asset.animations.map((clip, index) => clip.name || '모션 ' + (index + 1));
+    byId('motionNames').replaceChildren(...(names.length ? names : ['파일에 들어 있는 모션이 없어요.']).map(name => {
+      const item = document.createElement('li');
+      item.textContent = name;
+      return item;
+    }));
+    byId('motions').showModal();
+    output.textContent = '';
+  } catch (error) {
+    console.error(error);
+    output.textContent = '패드에서 모델 파일을 열지 못했어요. 동기화한 GLB 파일을 확인해 주세요.';
+  }
 }
 
 function wireControls() {
@@ -366,6 +459,7 @@ function wireControls() {
     profile: Object.hasOwn(profileNames, profile) ? profile : '아이 1',
     server: localStorage.getItem('serverUrl') ?? '',
     key: localStorage.getItem('serverKey') ?? '',
+    characterUrl: localStorage.getItem('characterUrl') ?? '',
   };
   const showProfile = () => { byId('activeProfile').textContent = '지금 그리는 사람 · ' + profileNames[preferences.profile]; };
   showProfile();
@@ -376,10 +470,12 @@ function wireControls() {
       profile: byId('profile').value,
       server: byId('serverUrl').value.trim(),
       key: byId('serverKey').value.trim(),
+      characterUrl: byId('characterUrl').value.trim(),
     };
     localStorage.setItem('profile', preferences.profile);
     localStorage.setItem('serverUrl', preferences.server);
     localStorage.setItem('serverKey', preferences.key);
+    localStorage.setItem('characterUrl', preferences.characterUrl);
     showProfile();
     setView(settingsReturn);
   };
@@ -404,17 +500,11 @@ function wireControls() {
     }
   };
   byId('garden').onclick = () => run(() => openGarden());
-  for (const [id, name] of Object.entries(species)) {
-    const button = document.createElement('button');
-    button.textContent = name;
-    button.onclick = () => run(async () => {
-      byId('pickerStatus').textContent = name + '를 준비하고 있어요…';
-      await openStudio(id);
-      byId('pickerStatus').textContent = '';
-    });
-    byId('characters').append(button);
-    buttons.push(button);
-  }
+  synced = JSON.parse(localStorage.getItem('syncedCharacters') ?? '[]');
+  renderCharacters();
+  byId('syncCharacters').hidden = !characterSync;
+  byId('syncCharacters').onclick = () => run(syncCharacters);
+  byId('showMotions').onclick = () => run(() => showMotions(selectedCharacter));
   for (const [name, value] of Object.entries(colors)) {
     const button = document.createElement('button');
     button.style.setProperty('--paint', value);
@@ -434,7 +524,7 @@ function wireControls() {
   };
   byId('finish').onclick = () => run(async () => {
     await drawings('readwrite', store => store.add({
-      id: model.speciesId, profile: preferences.profile, strokes,
+      ...model.character, profile: preferences.profile, strokes,
     }));
     strokes = [];
     sheet.replay(strokes);

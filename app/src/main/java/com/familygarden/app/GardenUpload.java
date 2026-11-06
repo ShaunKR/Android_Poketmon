@@ -25,7 +25,7 @@ final class GardenUpload {
             "window.finishGardenUpload?.(" + JSONObject.quote(result) + ")", null));
     }
 
-    private static boolean isPrivateIpv4(String host) {
+    static boolean isPrivateIpv4(String host) {
         if (host == null || !host.matches("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}")) return false;
         String[] octets = host.split("\\.");
         for (String octet : octets) {

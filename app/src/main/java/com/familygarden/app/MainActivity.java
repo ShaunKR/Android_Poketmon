@@ -8,6 +8,8 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.Collections;
 
@@ -26,6 +28,8 @@ public class MainActivity extends Activity {
         // WebView must accept HTTPS requests before the client can serve them from the APK.
         webView.setWebChromeClient(new WebChromeClient());
         webView.addJavascriptInterface(new GardenUpload(webView), "HomeGarden");
+        File characterStorage = new File(getFilesDir(), "characters");
+        webView.addJavascriptInterface(new CharacterSync(webView, characterStorage), "NasCharacters");
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -46,6 +50,10 @@ public class MainActivity extends Activity {
                     };
                     if (mime != null) {
                         try {
+                            if (path.matches("/web/synced/[a-f0-9]{64}\\.glb")) {
+                                File file = new File(characterStorage, path.substring("/web/synced/".length()));
+                                return new WebResourceResponse(mime, null, new FileInputStream(file));
+                            }
                             String encoding = mime.startsWith("text/") ? "UTF-8" : null;
                             return new WebResourceResponse(mime, encoding, getAssets().open(path.substring(1)));
                         } catch (IOException ignored) {

@@ -27,7 +27,12 @@ button, select, input[type=url], input[type=password] { font: inherit; color: in
 #home button { padding: 14px 24px; font-size: 20px; }
 .characters { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-top: 20px; }
 .characters button { min-height: 76px; font-size: 20px; }
+.characters button { touch-action: manipulation; }
 #preferences { max-width: 460px; display: grid; gap: 16px; margin-top: 18px; }
+#characterSettings { margin-top: 26px; }
+#showMotions { margin-top: 12px; }
+#motions { border: 1px solid #a9baaa; border-radius: 20px; padding: 20px; color: inherit; }
+#motions::backdrop { background: #183b3166; }
 button { font-weight: 700; cursor: pointer; }
 button:disabled { opacity: .45; }
 button[aria-pressed=true], .primary { background: #225c46; color: #fff; }

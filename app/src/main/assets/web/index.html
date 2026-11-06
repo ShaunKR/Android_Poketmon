@@ -39,12 +39,27 @@
 <section id="serverSettings" class="screen" hidden>
   <h2>설정하기</h2>
   <form id="preferences">
+    <h3>서버 설정</h3>
     <label>누가 색칠하나요? <select id="profile"><option value="아이 1">현진</option><option value="아이 2">현서</option></select></label>
     <label>서버 주소 <input id="serverUrl" type="url" placeholder="http://192.168.0.10:8787"></label>
     <label>전송 키 <input id="serverKey" type="password" autocomplete="off"></label>
+    <label>NAS 캐릭터 폴더 주소 <input id="characterUrl" type="url" placeholder="http://192.168.0.10/characters/"></label>
     <button class="primary" type="submit">설정 저장</button>
   </form>
+  <section id="characterSettings" aria-labelledby="characterSettingsTitle">
+    <h3 id="characterSettingsTitle">캐릭터 설정</h3>
+    <button id="syncCharacters" class="primary" hidden>동기화</button>
+    <p>캐릭터를 두 번 누르면 지원하는 모션을 볼 수 있어요.</p>
+    <div id="characterCatalog" class="characters"></div>
+    <button id="showMotions" disabled>모션 보기</button>
+    <p id="syncStatus" role="status"></p>
+  </section>
 </section>
+<dialog id="motions">
+  <h2 id="motionsTitle"></h2>
+  <ul id="motionNames"></ul>
+  <form method="dialog"><button>닫기</button></form>
+</dialog>
 <main id="workspace" hidden>
   <section id="stage" aria-label="포켓몬 화면"></section>
   <aside>
