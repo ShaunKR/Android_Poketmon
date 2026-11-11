@@ -1,21 +1,28 @@
 package com.familygarden.app;
 
-import android.app.Activity;
 import android.os.Bundle;
+import android.view.View;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
+import androidx.activity.ComponentActivity;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.Collections;
 
-public class MainActivity extends Activity {
+public class MainActivity extends ComponentActivity {
     private static final String HOST = "appassets.androidplatform.net";
     private WebView webView;
+    private FrameLayout content;
+    private View splash;
+    private boolean animationFinished;
+    private boolean webReady;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -28,6 +35,7 @@ public class MainActivity extends Activity {
         // WebView must accept HTTPS requests before the client can serve them from the APK.
         webView.setWebChromeClient(new WebChromeClient());
         webView.addJavascriptInterface(new GardenUpload(webView), "HomeGarden");
+        webView.addJavascriptInterface(new SplashBridge(), "NativeSplash");
         File characterStorage = new File(getFilesDir(), "characters");
         webView.addJavascriptInterface(new CharacterSync(webView, characterStorage), "NasCharacters");
         webView.setWebViewClient(new WebViewClient() {
@@ -64,8 +72,36 @@ public class MainActivity extends Activity {
                 return new WebResourceResponse("text/plain", "UTF-8", 404, "Not Found", Collections.emptyMap(), new ByteArrayInputStream(new byte[0]));
             }
         });
-        setContentView(webView);
+        content = new FrameLayout(this);
+        content.addView(webView, new FrameLayout.LayoutParams(-1, -1));
+        splash = GardenSplash.create(this, () -> {
+            animationFinished = true;
+            finishSplash();
+        });
+        content.addView(splash, new FrameLayout.LayoutParams(-1, -1));
+        setContentView(content);
+        content.postDelayed(this::removeSplash, 12000);
         webView.loadUrl("https://" + HOST + "/web/index.html");
+    }
+
+    public final class SplashBridge {
+        @JavascriptInterface
+        public void ready() {
+            runOnUiThread(() -> {
+                webReady = true;
+                finishSplash();
+            });
+        }
+    }
+
+    private void finishSplash() {
+        if (animationFinished && webReady) removeSplash();
+    }
+
+    private void removeSplash() {
+        if (splash == null) return;
+        content.removeView(splash);
+        splash = null;
     }
 
     @Override

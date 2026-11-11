@@ -676,11 +676,12 @@ async function start() {
     [db] = await Promise.all([
       database(),
       loadAsset('charmander').catch(error => console.warn(error)),
-      new Promise(resolve => setTimeout(resolve, 700)),
+      window.NativeSplash ? null : new Promise(resolve => setTimeout(resolve, 700)),
     ]);
     wireControls();
     refreshButtons();
     setView('home');
+    window.NativeSplash?.ready();
   }
 }
 
@@ -688,4 +689,5 @@ start().catch(error => {
   console.error(error);
   const output = currentView === 'splash' ? byId('splashStatus') : status;
   output.textContent = '화면을 시작하지 못했어요. 앱을 닫고 다시 열어 주세요.';
+  window.NativeSplash?.ready();
 });

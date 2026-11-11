@@ -17,7 +17,7 @@ Android Studio에서 저장소 루트를 열어도 됩니다. APK는 `app/build/
 
 ## 구현된 기능
 
-- 앱 시작 시 현진·현서가 표시되는 로딩 화면을 띄웁니다. 얼굴 사진은 첨부를 기다리고 있습니다.
+- 앱 이름은 **아빠최고야12**입니다. 시작 시 Compose 스플래시에서 풍선과 현진·현서 이름을 띄우고, 애니메이션과 WebView 준비가 끝나면 색칠 메뉴로 넘어갑니다. 얼굴 사진은 첨부를 기다리고 있습니다.
 - 메인에서 **색칠하기**를 누르면 캐릭터 선택 화면이 나옵니다. 피카츄·파이리·꼬부기·이상해씨·이브이가 기본 캐릭터입니다.
 - 선택한 캐릭터는 고정된 정면 2D 선 도안으로 표시됩니다. 색과 붓 크기 선택, 되돌리기, 처음부터 지우기를 지원합니다. **내 정원에 저장**을 누르면 칠한 부분이 3D 모델에 반영됩니다.
 - 상단 **설정하기**에서 사용자(현진·현서), 서버 URL과 전송 키, NAS 캐릭터 폴더 URL을 설정합니다.
@@ -28,6 +28,7 @@ Android Studio에서 저장소 루트를 열어도 됩니다. APK는 `app/build/
 
 | 경로 | 역할 |
 |---|---|
+| `app/src/main/java/com/familygarden/app/GardenSplash.kt` | Compose 시작 화면 |
 | `app/src/main/assets/web/app.js` | 앱 화면 전환, 2D 색칠 입력, 로컬 정원과 브라우저 정원 |
 | `app/src/main/assets/web/coloring-sheet.js` | GLB에서 정면 선 도안을 만들고 색칠 표시 |
 | `app/src/main/java/com/familygarden/app/CharacterSync.java` | NAS 목록과 GLB 다운로드, 패드 내부 저장 |
@@ -35,7 +36,7 @@ Android Studio에서 저장소 루트를 열어도 됩니다. APK는 `app/build/
 | `server/server.mjs` | Node.js 시험 서버와 웹 정원 |
 | `README.md` | 빌드, NAS 실행, 동기화 목록 형식 |
 
-PC에서 Android 빌드와 린트, APK 서명을 확인했습니다. 브라우저에서 색칠·되돌리기·저장·3D 반영과 동기화 후 목록 복원을 확인했습니다. Java 테스트에서 실제 HTTP 다운로드, 재동기화, 불완전한 파일 수신 시 기존 파일 보존을 확인했습니다.
+PC에서 Android 빌드와 린트, APK 서명을 확인했습니다. Android 14 에뮬레이터에서 Compose 스플래시가 표시되고 색칠 메뉴로 넘어가는 것을 확인했습니다. 브라우저에서 색칠·되돌리기·저장·3D 반영과 동기화 후 목록 복원을 확인했습니다. Java 테스트에서 실제 HTTP 다운로드, 재동기화, 불완전한 파일 수신 시 기존 파일 보존을 확인했습니다.
 
 기본 GLB는 다운로드 스크립트로 복원합니다. 별도로 확보한 `nas-teenieping-glb.zip`에는 하츄핑·다다핑·고고핑·로미 GLB와 동기화 목록이 들어 있습니다. 이 네 파일의 내장 모션은 0개입니다. `character-models-originals.zip`에는 티니핑과 엘사·안나·자스민 원본이 들어 있고, 디즈니 캐릭터의 GLB 변환은 남아 있습니다. 두 ZIP은 기존 노트북의 Codex 출력 폴더에 있으며 다른 노트북에서 필요하면 별도로 옮깁니다.
 
